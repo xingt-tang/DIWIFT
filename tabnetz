@@ -1,0 +1,87 @@
+import argparse
+import numpy as np
+
+from utils.io import load_yaml
+from utils.io import NpyDataset, NpyDataset_public
+from utils.modelnames import models
+from utils.argcheck import check_int_positive
+
+from experiment.tuning import hyper_parameter_tuning
+import tensorflow as tf
+
+
+from sklearn.linear_model import Lasso
+from sklearn.ensemble import ExtraTreesClassifier
+import tabnet
+#import TabnetClassifier
+from sklearn.feature_selection import SelectFromModel
+
+def trans(data, col_names):
+    X, y = data[:, :11], data[:, -1:]
+
+    x = dict(zip(col_names, tf.unstack(X,axis=1)))
+
+    y_ = np.hstack((1 - y, y))
+
+    return x, y
+
+
+def main(args):
+    params = load_yaml(args.grid)
+    parms_models = params['models']
+    params['models'] = {params['models']: models[params['models']]}
+
+    dataz = np.load(args.path + args.problem + args.train)
+
+
+
+    col_names = ['x0','x1','x2','x3','x4','x5','x6','x7','x8','x9','x10']
+
+    x, yy = trans(dataz, col_names)
+
+    feature_columns = []
+    for col_name in col_names:
+        feature_columns.append(tf.feature_column.numeric_column(col_name))
+
+    estimator = tabnet.TabNetClassifier(feature_columns=feature_columns, num_classes=2, feature_dim=22, output_dim=11, num_decision_steps=4, relaxation_factor=1.0,
+                                sparsity_coefficient=1e-5, batch_momentum=0.98,
+                                virtual_batch_size=None, norm_type='group',
+                                num_groups=1)
+
+    lr = tf.keras.optimizers.schedules.ExponentialDecay(0.01, decay_steps=100, decay_rate=0.9)
+    optimizer = tf.keras.optimizers.Adam(lr)
+    estimator.compile(optimizer, loss='category_crossentropy', metrics=['accuracy'])
+    estimator.fit(x, yy)
+    #estimator.fit(mm, epochs=100, validation_data=mm, verbose=2)
+
+    #print(lz)
+    exit(0)
+
+    tr_ds = NpyDataset_public(args.path + args.problem + args.train, y_dim=args.y_dim, x_dim=args.x_dim, mode='train')
+    val_ds = NpyDataset_public(args.path + args.problem + args.valid, y_dim=args.y_dim, x_dim=args.x_dim, mode='valid')
+    te_ds = NpyDataset_public(args.path + args.problem + args.test, y_dim=args.y_dim, x_dim=args.x_dim, mode='test')
+
+    hyper_parameter_tuning(tr_ds, val_ds, te_ds, params, dataset=args.problem,
+                           table_save_path=args.problem + args.table_name, seed=args.seed, problem=args.problem,
+                           gpu_on=args.gpu, save_model=args.save_model, input_dim=args.x_dim, feature_idx=feature_idx)
+
+
+if __name__ == "__main__":
+    # Commandline arguments
+    parser = argparse.ArgumentParser(description="ParameterTuning")
+    parser.add_argument('-tb', dest='table_name', default="l2x_tuning_u.csv")
+    parser.add_argument('-p', dest='path', default="data/")
+    parser.add_argument('-d', dest='problem', default="synthetic_data_syn1/")
+    parser.add_argument('-t', dest='train', default='train.npy')
+    parser.add_argument('-v', dest='valid', default='valid.npy')
+    parser.add_argument('-e', dest='test', default='test.npy')
+    parser.add_argument('-y', dest='grid', default='config/l2x.yml')
+    parser.add_argument('-s', dest='seed', type=check_int_positive, default=2021)
+    parser.add_argument('-xdim', dest='x_dim', type=check_int_positive, default=11)
+    parser.add_argument('-ydim', dest='y_dim', type=check_int_positive, default=1)
+    parser.add_argument('-gpu', dest='gpu', action='store_false', default=True)
+    parser.add_argument('-save', dest='save_model', action='store_true', default=False)
+    parser.add_argument('-mode', dest='mode', action='store_true', default=False)
+    args = parser.parse_args()
+
+    main(args)
